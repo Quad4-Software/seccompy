@@ -2,12 +2,12 @@
 
 import pytest
 
-import packagename
-from packagename import Greeter
+import seccompy
+from seccompy import Greeter
 
 
 def test_version_format() -> None:
-    major, minor, patch = packagename.__version__.split(".")
+    major, minor, patch = seccompy.__version__.split(".")
     assert int(major) >= 0
     assert int(minor) >= 0
     assert int(patch) >= 0
