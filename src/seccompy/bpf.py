@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Final
 
 __all__ = [
+    "BPF_ALU_AND_K",
     "BPF_JA",
     "BPF_JEQ",
     "BPF_JGEQ",
@@ -27,6 +28,7 @@ __all__ = [
     "BPF_JSET",
     "BPF_LD_ABS_W",
     "BPF_RET_K",
+    "And",
     "Insn",
     "Ja",
     "Jump",
@@ -37,6 +39,9 @@ __all__ = [
 
 BPF_LD_ABS_W: Final = 0x20
 """BPF_LD | BPF_W | BPF_ABS: load the 32-bit word at byte offset k."""
+
+BPF_ALU_AND_K: Final = 0x54
+"""BPF_ALU | BPF_AND | BPF_K: A &= k."""
 
 BPF_RET_K: Final = 0x06
 """BPF_RET | BPF_K: terminate the program with result k."""
@@ -70,6 +75,13 @@ class Insn:
 @dataclass(frozen=True)
 class Load(Insn):
     """Load the 32-bit word at byte offset k of the packet data."""
+
+    k: int
+
+
+@dataclass(frozen=True)
+class And(Insn):
+    """Mask the accumulator with k (A &= k)."""
 
     k: int
 
@@ -198,6 +210,8 @@ def _emit(
 ) -> bytes:
     if isinstance(insn, Load):
         return struct.pack("<HBBI", BPF_LD_ABS_W, 0, 0, insn.k)
+    if isinstance(insn, And):
+        return struct.pack("<HBBI", BPF_ALU_AND_K, 0, 0, insn.k)
     if isinstance(insn, Ja):
         off = _offset(insn.target, labels, pos, i)
         if off is None or off > 0xFFFFFFFF:

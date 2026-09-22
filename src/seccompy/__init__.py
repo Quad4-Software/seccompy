@@ -11,9 +11,9 @@ Kernel reference: https://docs.kernel.org/userspace-api/seccomp_filter.html
 
 import errno
 
-from . import _syscall, testing
+from . import _syscall, notify, testing
 from .errors import SeccompError, UnsupportedError
-from .filter import Action, Filter, FilterFlag
+from .filter import Action, ArgCmp, ArgCond, Args, CmpOp, Filter, FilterFlag
 from .syscalls import (
     AUDIT_ARCH_AARCH64,
     AUDIT_ARCH_X86_64,
@@ -23,12 +23,16 @@ from .syscalls import (
     syscall_nr,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "AUDIT_ARCH_AARCH64",
     "AUDIT_ARCH_X86_64",
     "Action",
+    "ArgCmp",
+    "ArgCond",
+    "Args",
+    "CmpOp",
     "Filter",
     "FilterFlag",
     "SeccompError",
@@ -38,6 +42,7 @@ __all__ = [
     "arch",
     "audit_arch",
     "flag_supported",
+    "notify",
     "supported",
     "syscall_name",
     "syscall_nr",

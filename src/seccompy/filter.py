@@ -20,15 +20,24 @@ Kernel reference: https://docs.kernel.org/userspace-api/seccomp_filter.html
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
-from typing import Final
+from typing import Final, cast
 
 from . import _syscall, bpf
+from .notify import Listener
 from .syscalls import audit_arch, syscall_nr
 
-__all__ = ["Action", "Filter", "FilterFlag"]
+__all__ = [
+    "Action",
+    "ArgCmp",
+    "ArgCond",
+    "Args",
+    "CmpOp",
+    "Filter",
+    "FilterFlag",
+]
 
 SECCOMP_RET_DATA: Final = 0x0000FFFF
 """Mask for the per-syscall data bits carried by ERRNO and TRACE."""
@@ -36,6 +45,8 @@ SECCOMP_RET_DATA: Final = 0x0000FFFF
 _OFF_NR: Final = 0
 _OFF_ARCH: Final = 4
 _OFF_ARG0: Final = 16
+
+_U64: Final = 0xFFFFFFFFFFFFFFFF
 
 
 class Action(IntEnum):
@@ -51,6 +62,7 @@ class Action(IntEnum):
     KILL = 0x00000000
     TRAP = 0x00030000
     ERRNO = 0x00050000
+    USER_NOTIF = 0x7FC00000
     TRACE = 0x7FF00000
     LOG = 0x7FFC0000
     ALLOW = 0x7FFF0000
@@ -58,8 +70,8 @@ class Action(IntEnum):
 
 class FilterFlag(IntFlag):
     """Flags accepted by SECCOMP_SET_MODE_FILTER, mirroring
-    SECCOMP_FILTER_FLAG_*. NEW_LISTENER is probed but rejected by
-    load(), since the notification protocol is not implemented.
+    SECCOMP_FILTER_FLAG_*. With NEW_LISTENER, load() returns a
+    notify.Listener for the SECCOMP_RET_USER_NOTIF protocol.
     """
 
     NONE = 0
@@ -71,10 +83,74 @@ class FilterFlag(IntFlag):
     WAIT_KILLABLE_RECV = 1 << 5
 
 
+class CmpOp(IntEnum):
+    """Argument comparison operators, mirroring SCMP_CMP_*.
+
+    All comparisons are unsigned and apply to the full 64-bit argument
+    value. MASKED_EQ tests arg & mask == value, which is the only way to
+    match flag bits like O_RDONLY whose value is zero.
+    """
+
+    EQ = 0
+    NE = 1
+    LT = 2
+    LE = 3
+    GT = 4
+    GE = 5
+    MASKED_EQ = 6
+
+
+@dataclass(frozen=True)
+class ArgCmp:
+    """One condition on a 64-bit syscall argument.
+
+    Compares seccomp_data.args[index] against value using op. mask is
+    only meaningful for MASKED_EQ, where it selects the bits compared;
+    value must not have bits set outside mask.
+    """
+
+    index: int
+    op: CmpOp
+    value: int
+    mask: int = _U64
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "op", CmpOp(self.op))
+        if not 0 <= self.index <= 5:
+            raise ValueError(f"argument index out of range: {self.index}")
+        if not 0 <= self.value <= _U64:
+            raise ValueError(f"argument value out of range: {self.value:#x}")
+        if not 0 <= self.mask <= _U64:
+            raise ValueError(f"argument mask out of range: {self.mask:#x}")
+        if self.op is CmpOp.MASKED_EQ:
+            if self.value & ~self.mask:
+                raise ValueError("masked-eq value has bits outside the mask")
+        elif self.mask != _U64:
+            raise ValueError("mask is only meaningful with MASKED_EQ")
+
+
+ArgCond = ArgCmp | tuple[int, int, int] | tuple[int, int, int, int]
+"""One arg condition: an ArgCmp or an (index, op, value[, mask]) tuple."""
+
+Args = Mapping[int, int] | Iterable[ArgCond]
+"""Arg conditions for a rule: an index->value equality mapping or an
+iterable of ArgCmp / (index, op, value[, mask]) tuples."""
+
+
+def _coerce_cond(cond: ArgCond) -> ArgCmp:
+    if isinstance(cond, ArgCmp):
+        return cond
+    if len(cond) == 3:
+        index, op, value = cond
+        return ArgCmp(index, CmpOp(op), value)
+    index, op, value, mask = cond
+    return ArgCmp(index, CmpOp(op), value, mask)
+
+
 @dataclass(frozen=True)
 class _Rule:
     action: int
-    args: tuple[tuple[int, int], ...]
+    args: tuple[ArgCmp, ...]
 
 
 class Filter:
@@ -82,7 +158,7 @@ class Filter:
 
     The default action applies to every syscall that has no matching
     rule. Rules are added with the action methods and match on the
-    syscall number, plus optionally on equality of one or more 64-bit
+    syscall number, plus optionally on conditions on the 64-bit
     arguments. Rules for the same syscall are evaluated in insertion
     order and the first match wins.
 
@@ -118,51 +194,41 @@ class Filter:
         self,
         syscall: str | int,
         action: int,
-        args: Mapping[int, int] | None = None,
+        args: Args | None = None,
     ) -> None:
         self._check_mutable()
         nr = syscall_nr(syscall)
-        conds: tuple[tuple[int, int], ...] = ()
+        conds: tuple[ArgCmp, ...] = ()
         if args:
-            for index, value in sorted(args.items()):
-                if not 0 <= index <= 5:
-                    raise ValueError(f"argument index out of range: {index}")
-                if not 0 <= value <= 0xFFFFFFFFFFFFFFFF:
-                    raise ValueError(f"argument value out of range: {value:#x}")
-                conds += ((index, value),)
+            if isinstance(args, Mapping):
+                mapping = cast("Mapping[int, int]", args)
+                raw = (
+                    ArgCmp(index, CmpOp.EQ, value) for index, value in mapping.items()
+                )
+            else:
+                raw = (_coerce_cond(cond) for cond in args)
+            conds = tuple(sorted(raw, key=lambda cond: cond.index))
         self._rules.setdefault(nr, []).append(_Rule(action, conds))
         self._program = None
 
-    def allow(
-        self, syscall: str | int, *, args: Mapping[int, int] | None = None
-    ) -> None:
+    def allow(self, syscall: str | int, *, args: Args | None = None) -> None:
         """Allow a syscall, optionally only when the given args match."""
         self._add(syscall, int(Action.ALLOW), args)
 
-    def kill(
-        self, syscall: str | int, *, args: Mapping[int, int] | None = None
-    ) -> None:
+    def kill(self, syscall: str | int, *, args: Args | None = None) -> None:
         """Kill the whole process when it invokes the syscall."""
         self._add(syscall, int(Action.KILL_PROCESS), args)
 
-    def kill_thread(
-        self, syscall: str | int, *, args: Mapping[int, int] | None = None
-    ) -> None:
+    def kill_thread(self, syscall: str | int, *, args: Args | None = None) -> None:
         """Kill only the calling thread (the classic KILL action)."""
         self._add(syscall, int(Action.KILL_THREAD), args)
 
-    def trap(
-        self, syscall: str | int, *, args: Mapping[int, int] | None = None
-    ) -> None:
+    def trap(self, syscall: str | int, *, args: Args | None = None) -> None:
         """Deliver SIGSYS to the thread when it invokes the syscall."""
         self._add(syscall, int(Action.TRAP), args)
 
     def errno(
-        self,
-        syscall: str | int,
-        error: int,
-        *,
-        args: Mapping[int, int] | None = None,
+        self, syscall: str | int, error: int, *, args: Args | None = None
     ) -> None:
         """Make the syscall fail with the given errno value."""
         if not 0 <= error <= SECCOMP_RET_DATA:
@@ -170,20 +236,25 @@ class Filter:
         self._add(syscall, int(Action.ERRNO) | error, args)
 
     def trace(
-        self,
-        syscall: str | int,
-        msg: int = 0,
-        *,
-        args: Mapping[int, int] | None = None,
+        self, syscall: str | int, msg: int = 0, *, args: Args | None = None
     ) -> None:
         """Hand the syscall to a ptrace tracer, tagging it with msg."""
         if not 0 <= msg <= SECCOMP_RET_DATA:
             raise ValueError(f"trace message out of range: {msg}")
         self._add(syscall, int(Action.TRACE) | msg, args)
 
-    def log(self, syscall: str | int, *, args: Mapping[int, int] | None = None) -> None:
+    def log(self, syscall: str | int, *, args: Args | None = None) -> None:
         """Allow the syscall but log it where the kernel sends audit."""
         self._add(syscall, int(Action.LOG), args)
+
+    def notify(self, syscall: str | int, *, args: Args | None = None) -> None:
+        """Send the syscall to a user-space supervisor for handling.
+
+        Requires the filter to be loaded with FilterFlag.NEW_LISTENER;
+        each matching syscall queues a notification on the listener fd
+        and blocks until the supervisor responds. See seccompy.notify.
+        """
+        self._add(syscall, int(Action.USER_NOTIF), args)
 
     @property
     def default(self) -> int:
@@ -229,13 +300,8 @@ class Filter:
                     falls_through = False
                     break
                 nxt = f"next_{nr}_{i}"
-                for index, value in rule.args:
-                    lo = value & 0xFFFFFFFF
-                    hi = (value >> 32) & 0xFFFFFFFF
-                    insns.append(bpf.Load(_OFF_ARG0 + 8 * index))
-                    insns.append(bpf.Jump(bpf.BPF_JEQ, lo, None, nxt))
-                    insns.append(bpf.Load(_OFF_ARG0 + 8 * index + 4))
-                    insns.append(bpf.Jump(bpf.BPF_JEQ, hi, None, nxt))
+                for j, cond in enumerate(rule.args):
+                    _emit_cond(insns, labels, cond, nxt, f"hit_{nr}_{i}_{j}")
                 insns.append(bpf.Ret(rule.action))
                 labels[nxt] = len(insns)
             if falls_through:
@@ -245,21 +311,23 @@ class Filter:
         insns.append(bpf.Ret(int(Action.KILL_PROCESS)))
         return bpf.assemble(insns, labels)
 
-    def load(self) -> None:
+    def load(self) -> Listener | None:
         """Install the filter on the calling thread via seccomp(2).
 
         Sets no_new_privs first, so unprivileged callers can load. The
         kernel rejects unknown flags with EINVAL; probe them beforehand
-        with seccompy.flag_supported(). NEW_LISTENER is not supported by
-        this library and is rejected with ValueError.
+        with seccompy.flag_supported(). With FilterFlag.NEW_LISTENER the
+        return value is a notify.Listener for the user notification
+        protocol; otherwise it is None.
         """
         if self._loaded:
             raise RuntimeError("filter is already loaded")
-        if self._flags & FilterFlag.NEW_LISTENER:
-            raise ValueError("NEW_LISTENER requires the user notification protocol")
         _syscall.set_no_new_privs()
-        _syscall.set_mode_filter(self.program, int(self._flags))
+        ret = _syscall.set_mode_filter(self.program, int(self._flags))
         self._loaded = True
+        if self._flags & FilterFlag.NEW_LISTENER:
+            return Listener(ret)
+        return None
 
     def __copy__(self) -> Filter:
         raise TypeError("Filter cannot be copied; clone its rules instead")
@@ -273,3 +341,59 @@ class Filter:
             f"{type(self).__name__}(default={self._default:#x}, "
             f"rules={sum(len(r) for r in self._rules.values())}, {state})"
         )
+
+
+def _emit_cond(
+    insns: list[bpf.Insn],
+    labels: dict[str, int],
+    cond: ArgCmp,
+    fail: str,
+    passed: str,
+) -> None:
+    """Emit the instruction sequence for one argument condition.
+
+    Classic BPF compares 32-bit words while seccomp_data args are 64
+    bits, so ordered comparisons test the high word first and only fall
+    back to the low word on equality. A jump to fail means the
+    condition does not hold; the passed label marks the position right
+    after the sequence, reached when the condition holds.
+    """
+    lo_off = _OFF_ARG0 + 8 * cond.index
+    hi_off = lo_off + 4
+    lo = cond.value & 0xFFFFFFFF
+    hi = (cond.value >> 32) & 0xFFFFFFFF
+
+    if cond.op is CmpOp.EQ:
+        insns.append(bpf.Load(lo_off))
+        insns.append(bpf.Jump(bpf.BPF_JEQ, lo, None, fail))
+        insns.append(bpf.Load(hi_off))
+        insns.append(bpf.Jump(bpf.BPF_JEQ, hi, None, fail))
+    elif cond.op is CmpOp.NE:
+        insns.append(bpf.Load(lo_off))
+        insns.append(bpf.Jump(bpf.BPF_JEQ, lo, None, passed))
+        insns.append(bpf.Load(hi_off))
+        insns.append(bpf.Jump(bpf.BPF_JEQ, hi, fail, None))
+    elif cond.op in (CmpOp.LT, CmpOp.LE):
+        insns.append(bpf.Load(hi_off))
+        insns.append(bpf.Jump(bpf.BPF_JGT, hi, fail, None))
+        insns.append(bpf.Jump(bpf.BPF_JEQ, hi, None, passed))
+        insns.append(bpf.Load(lo_off))
+        jop = bpf.BPF_JGEQ if cond.op is CmpOp.LT else bpf.BPF_JGT
+        insns.append(bpf.Jump(jop, lo, fail, None))
+    elif cond.op in (CmpOp.GT, CmpOp.GE):
+        insns.append(bpf.Load(hi_off))
+        insns.append(bpf.Jump(bpf.BPF_JGT, hi, passed, None))
+        insns.append(bpf.Jump(bpf.BPF_JEQ, hi, None, fail))
+        insns.append(bpf.Load(lo_off))
+        jop = bpf.BPF_JGT if cond.op is CmpOp.GT else bpf.BPF_JGEQ
+        insns.append(bpf.Jump(jop, lo, passed, fail))
+    else:  # CmpOp.MASKED_EQ: (arg & mask) == value, per 32-bit word
+        mlo = cond.mask & 0xFFFFFFFF
+        mhi = (cond.mask >> 32) & 0xFFFFFFFF
+        for off, m, v in ((lo_off, mlo, lo), (hi_off, mhi, hi)):
+            if m == 0:
+                continue
+            insns.append(bpf.Load(off))
+            insns.append(bpf.And(m))
+            insns.append(bpf.Jump(bpf.BPF_JEQ, v, None, fail))
+    labels[passed] = len(insns)

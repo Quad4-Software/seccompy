@@ -41,6 +41,56 @@ Rules can also match on 64-bit syscall arguments:
 filt.errno("write", errno.EIO, args={0: 1})  # deny write() on fd 1 only
 ```
 
+Beyond equality, ArgCmp conditions support unsigned comparisons and
+masked equality over the whole 64-bit argument:
+
+```python
+import os
+
+from seccompy import ArgCmp, CmpOp
+
+filt.errno("write", errno.EIO, args=[ArgCmp(0, CmpOp.GT, 4096)])
+# deny openat(O_RDONLY): masked equality is needed since O_RDONLY is 0
+filt.errno(
+    "openat", errno.EACCES, args=[ArgCmp(2, CmpOp.MASKED_EQ, 0, mask=os.O_ACCMODE)]
+)
+```
+
+With FilterFlag.NEW_LISTENER, load() returns a notification fd wrapped
+in seccompy.notify.Listener, and Filter.notify() rules delegate matching
+syscalls to a supervisor process (kernel 5.0+):
+
+```python
+import ctypes
+import errno
+import os
+
+from seccompy import Action, Filter, FilterFlag, notify
+
+filt = Filter(default=Action.ALLOW, flags=FilterFlag.NEW_LISTENER)
+filt.notify("mount")
+listener = filt.load()
+assert listener is not None
+
+libc = ctypes.CDLL(None, use_errno=True)
+pid = os.fork()
+if pid == 0:  # target: inherits the filter and the listener fd
+    libc.mount(None, None, None, 0, None)  # blocks until answered
+    os._exit(0)
+
+req = listener.recv()  # struct seccomp_notif: id, pid, args
+listener.respond(req.id, error=errno.EPERM)  # spoof a failure
+# or: listener.respond(req.id, flags=notify.RespFlag.CONTINUE)
+os.waitpid(pid, 0)
+listener.close()
+```
+
+The listener fd is pollable and also supports valid(), addfd() for fd
+injection and set_flags(); notify.pidfd_open/pidfd_getfd cover the
+supervisor-in-another-process case. The supervisor process must never
+call a notified syscall itself, or it blocks on its own listener.
+See seccomp_unotify(2) for the protocol and its caveats.
+
 `seccompy.supported()` reports whether the running kernel can install
 filters, `seccompy.action_supported(Action.X)` probes a return action
 and `seccompy.flag_supported(FilterFlag.X)` probes a load flag. The
