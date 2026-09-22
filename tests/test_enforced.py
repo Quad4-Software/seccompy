@@ -47,6 +47,18 @@ def test_arg_matched_rule(sandbox: Sandbox) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_arg_comparison_operators(sandbox: Sandbox, tmp_path: Path) -> None:
+    target = tmp_path / "readable.txt"
+    target.write_text("data")
+    result = sandbox("cmp", target)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_far_jump_program_loads(sandbox: Sandbox) -> None:
+    result = sandbox("far_jump")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_default_errno_action(sandbox: Sandbox) -> None:
     result = sandbox("default_errno")
     assert result.returncode == 0, result.stdout + result.stderr

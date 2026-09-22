@@ -8,13 +8,14 @@ FAIL lines for mismatches and exits nonzero on failure.
 
 import ctypes
 import errno
+import fcntl
 import os
 import select
 import signal
 import sys
 from pathlib import Path
 
-from seccompy import Action, Filter, FilterFlag, notify, syscall_nr
+from seccompy import Action, ArgCmp, CmpOp, Filter, FilterFlag, notify, syscall_nr
 from seccompy.syscalls import audit_arch
 
 failures: list[str] = []
@@ -34,7 +35,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def scenario_errno(path: str) -> None:
-    """openat is denied with EACCES; everything else still works."""
+    """openat is denied with EACCES. Everything else still works."""
     filt = Filter(default=Action.ALLOW)
     filt.errno("openat", errno.EACCES)
     filt.load()
@@ -61,7 +62,7 @@ def scenario_errno_libc() -> None:
 
 
 def scenario_kill() -> None:
-    """getpid kills the process; the parent sees SIGSYS."""
+    """getpid kills the process. The parent sees SIGSYS."""
     filt = Filter(default=Action.ALLOW)
     filt.kill("getpid")
     filt.load()
@@ -142,6 +143,68 @@ def scenario_default_errno() -> None:
         check("unlisted syscall denied", False, "no error raised")
     except PermissionError as exc:
         check("unlisted syscall denied", exc.errno == errno.EPERM, str(exc))
+
+
+def scenario_cmp(readable: str) -> None:
+    """Arg comparisons beyond equality are enforced by the real kernel.
+
+    write is denied when the fd (arg0) is at least 1000, exercising an
+    ordered comparison across the 32-bit word split. openat is denied
+    when flags & O_ACCMODE == O_RDONLY, exercising MASKED_EQ with a
+    zero value, the case a plain equality rule cannot express.
+    """
+    filt = Filter(default=Action.ALLOW)
+    filt.errno("write", errno.EIO, args=[ArgCmp(0, CmpOp.GE, 1000)])
+    filt.errno("openat", errno.EIO, args=[ArgCmp(2, CmpOp.MASKED_EQ, 0, mask=3)])
+    filt.load()
+
+    devnull = os.open("/dev/null", os.O_WRONLY)
+    try:
+        check("write low fd allowed", os.write(devnull, b"x") == 1)
+        highfd = fcntl.fcntl(devnull, fcntl.F_DUPFD_CLOEXEC, 1000)
+        check("dup landed at or above 1000", highfd >= 1000, str(highfd))
+        try:
+            os.write(highfd, b"x")
+            check("write high fd denied", False, "no error raised")
+        except OSError as exc:
+            check("write high fd denied", exc.errno == errno.EIO, str(exc))
+        finally:
+            os.close(highfd)
+    finally:
+        os.close(devnull)
+
+    try:
+        os.open(readable, os.O_RDONLY)
+        check("O_RDONLY openat denied", False, "no error raised")
+    except OSError as exc:
+        check("O_RDONLY openat denied", exc.errno == errno.EIO, str(exc))
+
+    fd = os.open("/dev/null", os.O_WRONLY)
+    check("O_WRONLY openat allowed", fd >= 0)
+    os.close(fd)
+
+
+def scenario_far_jump() -> None:
+    """A filter needing JA trampolines is accepted and enforced.
+
+    Three hundred rules push every conditional dispatch jump past the
+    255-instruction limit, so the assembler expands them into hops over
+    unconditional jumps. The kernel verifier rejects a misencoded
+    program, and the denied membarrier proves dispatch still lands on
+    the right rule.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    filt = Filter(default=Action.ALLOW)
+    for nr in range(1000, 1300):
+        filt.errno(nr, errno.ENOSYS)
+    filt.errno("membarrier", errno.EACCES)
+    filt.load()
+
+    ctypes.set_errno(0)
+    rc = libc.syscall(syscall_nr("membarrier"), 0, 0, 0, 0, 0)
+    err = ctypes.get_errno()
+    check("far rule denied", rc == -1 and err == errno.EACCES, f"rc={rc} errno={err}")
+    check("allowed syscall works", os.getpid() > 0)
 
 
 def scenario_nnp() -> None:
@@ -285,7 +348,7 @@ def scenario_notify_close() -> None:
     pid = os.fork()
     if pid == 0:
         # ENOSYS only fires once the last reference to the notification
-        # fd is gone; the child inherited one across fork.
+        # fd is gone. The child inherited one across fork.
         listener.close()
         ctypes.set_errno(0)
         rc = libc.mount(None, None, None, 0, None)
@@ -413,6 +476,8 @@ def main() -> int:
         "log": scenario_log,
         "args": scenario_args,
         "default_errno": scenario_default_errno,
+        "cmp": lambda: scenario_cmp(sys.argv[2]),
+        "far_jump": scenario_far_jump,
         "nnp": scenario_nnp,
         "notify_errno": scenario_notify_errno,
         "notify_continue": scenario_notify_continue,
