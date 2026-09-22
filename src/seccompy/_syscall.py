@@ -2,7 +2,7 @@
 """Raw ctypes bindings for the seccomp syscall, prctl, ioctl and pidfd.
 
 All calls go through libc's syscall(2) wrapper, so no libffi or compiler
-is needed. The syscall numbers differ per architecture; the numbers for
+is needed. The syscall numbers differ per architecture. The numbers for
 the running architecture are chosen at call time.
 
 Kernel reference: https://docs.kernel.org/userspace-api/seccomp_filter.html
@@ -30,7 +30,7 @@ _SYS_SECCOMP = {
     "arm64": 277,
 }
 
-# (pidfd_open, pidfd_getfd); identical on all supported architectures.
+# (pidfd_open, pidfd_getfd), identical on all supported architectures.
 _SYS_PIDFD = {
     "x86_64": (434, 438),
     "amd64": (434, 438),
@@ -164,7 +164,7 @@ def probe_flag(flag: int) -> bool:
 
     A NULL filter program is passed, so the kernel validates the flag and
     then fails on the bad pointer without installing anything. EINVAL
-    means the flag is unknown; EFAULT or EACCES mean it passed flag
+    means the flag is unknown. EFAULT or EACCES mean it passed flag
     validation.
     """
     try:
@@ -233,7 +233,7 @@ def pidfd_open(pid: int, flags: int = 0) -> int:
 def pidfd_getfd(pidfd: int, fd: int, flags: int = 0) -> int:
     """Duplicate fd from the process pidfd refers to via pidfd_getfd(2).
 
-    Requires ptrace-level access on the target process; the kernel
+    Requires ptrace-level access on the target process. The kernel
     raises EPERM when the caller may not inspect it.
     """
     return _call(_pidfd_nr()[1], pidfd, fd, flags)

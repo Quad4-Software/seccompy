@@ -81,7 +81,7 @@ def test_load_packs_exactly() -> None:
 
 
 def test_conditional_jump_offsets() -> None:
-    # ld arch; jeq arch -> +0 / kill; ld nr; jeq 39 -> allow / next; ret kill; ret allow
+    # ld arch, jeq arch -> +0 / kill, ld nr, jeq 39 -> allow / next, ret kill, ret allow
     insns: list[bpf.Insn] = [
         bpf.Load(4),
         bpf.Jump(bpf.BPF_JEQ, AUDIT_ARCH_X86_64, None, "kill"),

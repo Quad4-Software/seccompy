@@ -3,7 +3,7 @@
 
 A seccomp filter is a classic BPF program run over struct seccomp_data.
 This module lets callers describe programs as instruction objects with
-symbolic jump labels; assemble() resolves the labels into the 8-bit
+symbolic jump labels. assemble() resolves the labels into the 8-bit
 relative offsets struct sock_filter requires. Classic BPF only jumps
 forward, and conditional jumps are limited to 255 instructions, so a
 conditional jump whose target lies farther away is expanded into a short
@@ -235,9 +235,9 @@ def _emit(
 def _emit_expanded(jump: Jump, labels: dict[str, int], pos: list[int], i: int) -> bytes:
     """Encode a far conditional jump as a hop plus JA trampolines.
 
-    jt None:  jXX jt=1 jf=0; JA jf   (true falls past the JA)
-    jf None:  jXX jt=0 jf=1; JA jt   (false falls past the JA)
-    both:     jXX jt=0 jf=1; JA jt; JA jf
+    jt None:  jXX jt=1 jf=0, JA jf   (true falls past the JA)
+    jf None:  jXX jt=0 jf=1, JA jt   (false falls past the JA)
+    both:     jXX jt=0 jf=1, JA jt, JA jf
     """
     out = bytearray()
     if jump.jt is None:

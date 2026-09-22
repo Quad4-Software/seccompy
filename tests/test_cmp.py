@@ -54,7 +54,7 @@ def test_cmpop_values() -> None:
 
 
 def test_argcmp_coerces_int_op() -> None:
-    # A plain int is coerced to CmpOp at runtime; cast keeps the
+    # A plain int is coerced to CmpOp at runtime. The cast keeps the
     # intentional loose call legible to type checkers.
     assert ArgCmp(0, cast("CmpOp", 4), 7).op is CmpOp.GT
 
@@ -83,9 +83,9 @@ def test_gt_golden_program() -> None:
         (BPF_RET_K, 0, 0, ALW),
         (BPF_LD_ABS_W, 0, 0, 20),  # arg0 high word
         (BPF_JGT, 3, 0, 1),  # hi > 1 -> hit
-        (BPF_JEQ, 0, 3, 1),  # hi == 1 -> check lo; hi < 1 -> next rule
+        (BPF_JEQ, 0, 3, 1),  # hi == 1 -> check lo, hi < 1 -> next rule
         (BPF_LD_ABS_W, 0, 0, 16),  # arg0 low word
-        (BPF_JGT, 0, 1, 0),  # lo > 0 -> hit; else next rule
+        (BPF_JGT, 0, 1, 0),  # lo > 0 -> hit, else next rule
         (BPF_RET_K, 0, 0, ERR),
         (BPF_RET_K, 0, 0, ALW),
         (BPF_RET_K, 0, 0, KILL),
@@ -132,7 +132,7 @@ def test_masked_eq_both_words() -> None:
         args=[ArgCmp(0, CmpOp.MASKED_EQ, 0xABCD_0000_0000, mask=0xFFFF_FFFF_0000_0000)],
     )
     prog = insns(filt.program)
-    # lo word: (lo & 0) == 0 is vacuous and skipped; hi word is checked.
+    # lo word: (lo & 0) == 0 is vacuous and skipped. Hi word is checked.
     assert prog[5:8] == [
         (BPF_LD_ABS_W, 0, 0, 20),
         (BPF_ALU_AND_K, 0, 0, 0xFFFFFFFF),

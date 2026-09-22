@@ -4,7 +4,7 @@
 Each table maps a syscall name to its number for one architecture, as
 defined by asm/unistd_64.h (x86_64) and asm-generic/unistd.h (aarch64).
 The audit arch constants come from linux/audit.h and identify the ABI a
-seccomp filter sees in seccomp_data.arch; a filter must reject foreign
+seccomp filter sees in seccomp_data.arch. A filter must reject foreign
 architectures to avoid the syscall-number confusion described in the
 kernel documentation.
 """

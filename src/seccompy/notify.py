@@ -2,7 +2,7 @@
 """Supervisor side of the seccomp user notification protocol.
 
 A Filter loaded with FilterFlag.NEW_LISTENER returns a notification
-file descriptor; rules added with Filter.notify() make matching
+file descriptor. Rules added with Filter.notify() make matching
 syscalls queue a struct seccomp_notif on that fd and block the target
 thread until a supervisor answers. Listener wraps the fd with the
 SECCOMP_IOCTL_NOTIF_* ioctls:
@@ -99,7 +99,7 @@ def _check_id(notif_id: int) -> None:
 class RespFlag(IntFlag):
     """Flags for Listener.respond(), mirroring SECCOMP_USER_NOTIF_FLAG_*.
 
-    CONTINUE is the only flag the kernel defines; it makes the target's
+    CONTINUE is the only flag the kernel defines. It makes the target's
     syscall execute normally instead of returning a spoofed result.
     """
 
@@ -164,7 +164,7 @@ def sizes() -> NotifSizes:
     """Return the kernel's notification struct sizes.
 
     SECCOMP_GET_NOTIF_SIZES is the documented ABI-compat check for the
-    notification protocol; Listener validates it against the structures
+    notification protocol. Listener validates it against the structures
     this library uses at construction time.
     """
     raw = _syscall.notif_sizes()
@@ -181,7 +181,7 @@ def pidfd_open(pid: int, flags: int = 0) -> int:
 def pidfd_getfd(pidfd: int, fd: int, flags: int = 0) -> int:
     """Duplicate fd from the process pidfd refers to via pidfd_getfd(2).
 
-    The supervisor needs ptrace-level access on the target; the kernel
+    The supervisor needs ptrace-level access on the target. The kernel
     answers EPERM otherwise. This is one way to obtain a target's
     notification fd or to read descriptors out of it.
     """
@@ -194,7 +194,7 @@ class Listener:
     """A notification fd for the SECCOMP_RET_USER_NOTIF protocol.
 
     Obtained from Filter.load() when the filter carries
-    FilterFlag.NEW_LISTENER; the constructor validates the kernel's
+    FilterFlag.NEW_LISTENER. The constructor validates the kernel's
     struct sizes via SECCOMP_GET_NOTIF_SIZES and takes ownership of the
     fd, closing it if validation fails. Use as a context manager or
     call close().
@@ -237,7 +237,7 @@ class Listener:
     def recv(self) -> Notification:
         """Wait for and return the next notification event.
 
-        Blocks until a target thread triggers a USER_NOTIF rule; poll
+        Blocks until a target thread triggers a USER_NOTIF rule. Poll
         the fd first to integrate with an event loop. SeccompError with
         ENOENT means the target died while the notification was being
         generated.
@@ -264,14 +264,14 @@ class Listener:
     ) -> None:
         """Send a response for a received notification.
 
-        With error=0 the target's syscall returns val; with error set
+        With error=0 the target's syscall returns val. With error set
         to an errno value the syscall fails with it (the kernel expects
         the negated value, which this method applies). RespFlag.CONTINUE
         instead lets the kernel execute the syscall and requires error
         and val to stay zero.
 
         SeccompError with ENOENT means the target was interrupted by a
-        signal or died before the response arrived; valid() narrows that
+        signal or died before the response arrived. valid() narrows that
         window but cannot close it.
         """
         _check_id(notif_id)
@@ -297,10 +297,10 @@ class Listener:
 
         Returns the fd number allocated in the target, suitable as the
         val of a later respond(). AddFdFlag.SETFD installs at newfd
-        instead of the lowest free slot; AddFdFlag.SEND also completes
+        instead of the lowest free slot. AddFdFlag.SEND also completes
         the notification atomically so the target's syscall returns the
         new fd number. newfd_flags accepts only O_CLOEXEC. The ioctl
-        requires Linux 5.9+ (SEND: 5.14+); older kernels fail it with
+        requires Linux 5.9+ (SEND: 5.14+). Older kernels fail it with
         EINVAL.
         """
         _check_id(notif_id)
@@ -321,7 +321,7 @@ class Listener:
         """Return whether the notification still awaits a response.
 
         False means the target's blocked syscall was interrupted or the
-        target died; a positive answer can still go stale before the
+        target died. A positive answer can still go stale before the
         next call, so respond() may fail with ENOENT regardless.
         """
         _check_id(notif_id)
@@ -350,10 +350,10 @@ class Listener:
             self._closed = True
 
     def __copy__(self) -> Listener:
-        raise TypeError("Listener cannot be copied; it owns a kernel file descriptor")
+        raise TypeError("Listener cannot be copied: it owns a kernel file descriptor")
 
     def __deepcopy__(self, memo: dict[int, object]) -> Listener:
-        raise TypeError("Listener cannot be copied; it owns a kernel file descriptor")
+        raise TypeError("Listener cannot be copied: it owns a kernel file descriptor")
 
     def __repr__(self) -> str:
         state = "closed" if self._closed else "open"

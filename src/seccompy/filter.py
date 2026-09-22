@@ -13,7 +13,7 @@ seccomp_data on every syscall entry:
 The compiled program first rejects foreign ABIs by comparing
 seccomp_data.arch against the native AUDIT_ARCH_* value, then
 dispatches on the syscall number. Loading is irreversible and requires
-either CAP_SYS_ADMIN or no_new_privs; load() sets no_new_privs itself.
+either CAP_SYS_ADMIN or no_new_privs. load() sets no_new_privs itself.
 
 Kernel reference: https://docs.kernel.org/userspace-api/seccomp_filter.html
 """
@@ -52,7 +52,7 @@ _U64: Final = 0xFFFFFFFFFFFFFFFF
 class Action(IntEnum):
     """Seccomp return actions, mirroring SECCOMP_RET_*.
 
-    ERRNO and TRACE carry a 16-bit payload in the low bits; the Filter
+    ERRNO and TRACE carry a 16-bit payload in the low bits. The Filter
     methods errno() and trace() attach it. KILL is the classic alias for
     KILL_THREAD.
     """
@@ -105,8 +105,8 @@ class ArgCmp:
     """One condition on a 64-bit syscall argument.
 
     Compares seccomp_data.args[index] against value using op. mask is
-    only meaningful for MASKED_EQ, where it selects the bits compared;
-    value must not have bits set outside mask.
+    only meaningful for MASKED_EQ, where it selects the bits compared.
+    The value must not have bits set outside the mask.
     """
 
     index: int
@@ -163,7 +163,7 @@ class Filter:
     order and the first match wins.
 
     Loading installs the filter on the calling thread and is
-    irreversible; children inherit it. The filter refuses mutation once
+    irreversible. Children inherit it. The filter refuses mutation once
     loaded and cannot be copied.
 
     Kernel reference: https://docs.kernel.org/userspace-api/seccomp_filter.html
@@ -250,8 +250,8 @@ class Filter:
     def notify(self, syscall: str | int, *, args: Args | None = None) -> None:
         """Send the syscall to a user-space supervisor for handling.
 
-        Requires the filter to be loaded with FilterFlag.NEW_LISTENER;
-        each matching syscall queues a notification on the listener fd
+        Requires the filter to be loaded with FilterFlag.NEW_LISTENER.
+        Each matching syscall queues a notification on the listener fd
         and blocks until the supervisor responds. See seccompy.notify.
         """
         self._add(syscall, int(Action.USER_NOTIF), args)
@@ -315,10 +315,10 @@ class Filter:
         """Install the filter on the calling thread via seccomp(2).
 
         Sets no_new_privs first, so unprivileged callers can load. The
-        kernel rejects unknown flags with EINVAL; probe them beforehand
+        kernel rejects unknown flags with EINVAL. Probe them beforehand
         with seccompy.flag_supported(). With FilterFlag.NEW_LISTENER the
         return value is a notify.Listener for the user notification
-        protocol; otherwise it is None.
+        protocol. Otherwise it is None.
         """
         if self._loaded:
             raise RuntimeError("filter is already loaded")
@@ -330,10 +330,10 @@ class Filter:
         return None
 
     def __copy__(self) -> Filter:
-        raise TypeError("Filter cannot be copied; clone its rules instead")
+        raise TypeError("Filter cannot be copied: clone its rules instead")
 
     def __deepcopy__(self, memo: dict[int, object]) -> Filter:
-        raise TypeError("Filter cannot be copied; clone its rules instead")
+        raise TypeError("Filter cannot be copied: clone its rules instead")
 
     def __repr__(self) -> str:
         state = "loaded" if self._loaded else "building"
@@ -355,7 +355,7 @@ def _emit_cond(
     Classic BPF compares 32-bit words while seccomp_data args are 64
     bits, so ordered comparisons test the high word first and only fall
     back to the low word on equality. A jump to fail means the
-    condition does not hold; the passed label marks the position right
+    condition does not hold. The passed label marks the position right
     after the sequence, reached when the condition holds.
     """
     lo_off = _OFF_ARG0 + 8 * cond.index

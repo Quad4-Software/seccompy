@@ -53,7 +53,7 @@ __all__ = [
 def supported() -> bool:
     """Return whether the running kernel can install seccomp filters.
 
-    Probes SECCOMP_GET_ACTION_AVAIL first; kernels older than 4.8 lack
+    Probes SECCOMP_GET_ACTION_AVAIL first. Kernels older than 4.8 lack
     that operation but still support filters, so an EINVAL answer also
     counts as supported when the seccomp syscall itself exists.
     """

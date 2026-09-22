@@ -35,7 +35,7 @@ class ProbeResult:
 def probe(filt: Filter, fn: Callable[[], object]) -> ProbeResult:
     """Run fn in a forked child process restricted by filt.
 
-    The filter must not be loaded; it is loaded in the child only, so
+    The filter must not be loaded. It is loaded in the child only, so
     the caller's copy stays usable. The return value of fn is discarded.
     The child exits with os._exit, so atexit handlers, buffered I/O and
     threads do not run there.

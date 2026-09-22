@@ -86,7 +86,7 @@ listener.close()
 ```
 
 The listener fd is pollable and also supports valid(), addfd() for fd
-injection and set_flags(); notify.pidfd_open/pidfd_getfd cover the
+injection and set_flags(). notify.pidfd_open/pidfd_getfd cover the
 supervisor-in-another-process case. The supervisor process must never
 call a notified syscall itself, or it blocks on its own listener.
 See seccomp_unotify(2) for the protocol and its caveats.
