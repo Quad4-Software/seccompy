@@ -1,38 +1,56 @@
-# python-library-template
+# seccompy
 
-[![CI](https://github.com/Quad4-Software/python-library-template/actions/workflows/ci.yml/badge.svg)](https://github.com/Quad4-Software/python-library-template/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Quad4-Software/python-library-template/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Quad4-Software/python-library-template)
+[![CI](https://github.com/Quad4-Software/seccompy/actions/workflows/ci.yml/badge.svg)](https://github.com/Quad4-Software/seccompy/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Quad4-Software/seccompy/actions/workflows/codeql.yml/badge.svg)](https://github.com/Quad4-Software/seccompy/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Quad4-Software/seccompy/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Quad4-Software/seccompy)
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue)](LICENSE)
 
-Quad4 template for dependency-free typed Python libraries.
+Dependency-free Python bindings for Linux seccomp-BPF syscall filtering.
+Filters are assembled in pure Python from symbolic instructions, checked
+against the native architecture to block ABI confusion, and installed
+through seccomp(2) with prctl(PR_SET_NO_NEW_PRIVS), so no compiler,
+libbpf or privileges are needed.
 
-## Contents
+Requires Python 3.10+ and Linux 3.17+ on x86_64 or aarch64.
 
-- `src/` layout with Hatchling, dynamic version from `__init__.py`
-- Fully typed, `py.typed` shipped, mypy strict over `src` and `tests`
-- ruff lint + format, bandit, pytest
-- `make check` runs the full local gate
-- GitHub Actions: CI matrix 3.10-3.14, CodeQL, OpenSSF Scorecard with SARIF
-  upload, zizmor, dependency review, tag-triggered PyPI release with build
-  provenance and attestations
-- All actions pinned to commit SHAs, least-privilege permissions,
-  `step-security/harden-runner` on every job, Dependabot with 7-day cooldown
+## Install
 
-## Using this template
+    pip install seccompy
 
-1. Create a repository from this template (GitHub "Use this template" button)
-   or copy the tree.
-2. Rename the package:
+## Usage
 
-   ```sh
-   mv src/seccompy src/mypkg
-   mv tests/test_seccompy.py tests/test_mypkg.py
-   grep -rl seccompy . | xargs sed -i 's/seccompy/mypkg/g'
-   ```
+```python
+import errno
 
-3. Update `pyproject.toml`: description, keywords, classifiers, repository URL.
-4. Update `SECURITY.md` if the contact address differs.
-5. For releases, configure a PyPI trusted publisher for the repository
-   (workflow `release.yml`, environment `pypi`), then tag `v*` to publish.
+from seccompy import Action, Filter
+
+filt = Filter(default=Action.ALLOW)
+filt.errno("openat", errno.EACCES)
+filt.kill("ptrace")
+filt.log("mount")
+filt.load()
+
+# openat now fails with EACCES for this thread and its children,
+# ptrace kills the process, mount is allowed but logged
+```
+
+Rules can also match on 64-bit syscall arguments:
+
+```python
+filt.errno("write", errno.EIO, args={0: 1})  # deny write() on fd 1 only
+```
+
+`seccompy.supported()` reports whether the running kernel can install
+filters, `seccompy.action_supported(Action.X)` probes a return action
+and `seccompy.flag_supported(FilterFlag.X)` probes a load flag. The
+compiled BPF program is available as `filt.program` for inspection, and
+`seccompy.testing.probe()` runs a callable under a filter in a forked
+child to preview enforcement.
+
+## Documentation
+
+- API: docstrings in `src/seccompy/`, mostly `filter.py`
+- seccomp reference: https://docs.kernel.org/userspace-api/seccomp_filter.html
+- seccomp(2) man page: https://man7.org/linux/man-pages/man2/seccomp.2.html
 
 License: 0BSD.
