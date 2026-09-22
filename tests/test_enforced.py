@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 import seccompy
-from seccompy import _syscall
 
 from .conftest import Sandbox, kernel_has_action, requires_seccomp
 
@@ -74,8 +73,8 @@ def test_probe_reports_kill() -> None:
 
 
 def test_probe_rejects_loaded_filter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_syscall, "set_no_new_privs", lambda: None)
-    monkeypatch.setattr(_syscall, "set_mode_filter", lambda program, flags: 0)
+    monkeypatch.setattr(seccompy._syscall, "set_no_new_privs", lambda: None)
+    monkeypatch.setattr(seccompy._syscall, "set_mode_filter", lambda program, flags: 0)
     filt = seccompy.Filter()
     filt.load()
     with pytest.raises(RuntimeError, match="loaded"):
