@@ -3,6 +3,7 @@
 [![CI](https://github.com/Quad4-Software/seccompy/actions/workflows/ci.yml/badge.svg)](https://github.com/Quad4-Software/seccompy/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Quad4-Software/seccompy/actions/workflows/codeql.yml/badge.svg)](https://github.com/Quad4-Software/seccompy/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Quad4-Software/seccompy/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Quad4-Software/seccompy)
+[![PyPI](https://img.shields.io/pypi/v/seccompy.svg)](https://pypi.org/project/seccompy/)
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue)](LICENSE)
 
 Dependency-free Python bindings for Linux seccomp-BPF syscall filtering.
