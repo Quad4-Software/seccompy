@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: 0BSD
 """Tests for the user notification protocol: structs, flags and Listener."""
 
+import contextlib
 import ctypes
 import errno
 import os
@@ -8,14 +9,20 @@ from collections.abc import Callable
 
 import pytest
 
-import seccompy
-from seccompy import SeccompError, UnsupportedError, _syscall, notify
+from seccompy import (
+    Action,
+    FilterFlag,
+    SeccompError,
+    UnsupportedError,
+    _syscall,
+    flag_supported,
+    notify,
+)
 
 from .conftest import Sandbox, kernel_has_action, requires_seccomp
 
 requires_user_notif = pytest.mark.skipif(
-    not kernel_has_action("user_notif")
-    or not seccompy.flag_supported(seccompy.FilterFlag.NEW_LISTENER),
+    not kernel_has_action("user_notif") or not flag_supported(FilterFlag.NEW_LISTENER),
     reason="kernel lacks SECCOMP_RET_USER_NOTIF support",
 )
 
@@ -35,7 +42,7 @@ def fake_sizes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def devnull() -> int:
-    return os.open("/dev/null", os.O_RDONLY)
+    return os.dup(0)
 
 
 def test_ioctl_request_numbers() -> None:
@@ -67,7 +74,7 @@ def test_flag_values() -> None:
 
 
 def test_user_notif_action_value() -> None:
-    assert int(seccompy.Action.USER_NOTIF) == 0x7FC00000
+    assert int(Action.USER_NOTIF) == 0x7FC00000
 
 
 @requires_seccomp
@@ -111,8 +118,12 @@ def test_listener_rejects_abi_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(_syscall, "notif_sizes", lambda: bad)
     fd = devnull()
-    with pytest.raises(UnsupportedError, match="ABI"):
-        notify.Listener(fd)
+    try:
+        with pytest.raises(UnsupportedError, match="ABI"):
+            notify.Listener(fd)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
     # The fd is closed when validation fails.
     with pytest.raises(OSError, match="Bad file descriptor"):
         os.fstat(fd)
@@ -122,15 +133,12 @@ def test_listener_cannot_be_copied(monkeypatch: pytest.MonkeyPatch) -> None:
     import copy
 
     fake_sizes(monkeypatch)
-    listener = notify.Listener(devnull())
-    try:
+    with notify.Listener(devnull()) as listener:
         with pytest.raises(TypeError):
             copy.copy(listener)
         with pytest.raises(TypeError):
             copy.deepcopy(listener)
         assert repr(listener).startswith("Listener(fd=")
-    finally:
-        listener.close()
 
 
 def test_ioctl_reaches_non_notify_fd(monkeypatch: pytest.MonkeyPatch) -> None:

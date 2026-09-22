@@ -99,7 +99,7 @@ def test_load_passes_flags(fake_kernel: SimpleNamespace) -> None:
 def test_load_new_listener_returns_listener(
     fake_kernel: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fd = os.open("/dev/null", os.O_RDONLY)
+    fd = os.dup(0)
     monkeypatch.setattr(_syscall, "set_mode_filter", lambda program, flags: fd)
     sizes = _syscall.SeccompNotifSizes(
         seccomp_notif=ctypes.sizeof(_syscall.SeccompNotif),

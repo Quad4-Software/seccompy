@@ -196,8 +196,7 @@ def _recv(listener: notify.Listener) -> notify.Notification:
 def scenario_notify_errno() -> None:
     """A notified mount gets a spoofed EPERM from the supervisor."""
     libc = ctypes.CDLL(None, use_errno=True)
-    listener = _listen("mount")
-    try:
+    with _listen("mount") as listener:
         pid = os.fork()
         if pid == 0:
             ctypes.set_errno(0)
@@ -219,16 +218,13 @@ def scenario_notify_errno() -> None:
             os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
             str(status),
         )
-    finally:
-        listener.close()
 
 
 def scenario_notify_continue() -> None:
     """CONTINUE lets the target's uname run for real."""
     libc = ctypes.CDLL(None, use_errno=True)
     cr, cw = os.pipe()
-    listener = _listen("uname")
-    try:
+    with _listen("uname") as listener:
         pid = os.fork()
         if pid == 0:
             os.close(cr)
@@ -254,15 +250,12 @@ def scenario_notify_continue() -> None:
             os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
             str(status),
         )
-    finally:
-        listener.close()
 
 
 def scenario_notify_dead() -> None:
     """Responding after the target died fails with ENOENT."""
     libc = ctypes.CDLL(None, use_errno=True)
-    listener = _listen("mount")
-    try:
+    with _listen("mount") as listener:
         pid = os.fork()
         if pid == 0:
             libc.mount(None, None, None, 0, None)  # blocks until killed
@@ -283,8 +276,6 @@ def scenario_notify_dead() -> None:
         except OSError as exc:
             check("respond to dead", exc.errno == errno.ENOENT, str(exc))
         check("valid on dead", not listener.valid(notif.id))
-    finally:
-        listener.close()
 
 
 def scenario_notify_close() -> None:
@@ -318,52 +309,55 @@ def scenario_notify_addfd() -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     devnull = os.open("/dev/null", os.O_RDONLY)
     cr, cw = os.pipe()
-    listener = _listen("dup")
     try:
-        pid = os.fork()
-        if pid == 0:
-            os.close(cr)
-            ctypes.set_errno(0)
-            fd = libc.dup(-1)  # invalid fd, replaced by the injected one
-            if fd < 0:
-                os._exit(6)
-            data = os.read(fd, 16)  # /dev/null reads as EOF
-            os.write(cw, str(fd).encode() + b":" + data)
-            os._exit(0)
+        with _listen("dup") as listener:
+            pid = os.fork()
+            if pid == 0:
+                os.close(cr)
+                ctypes.set_errno(0)
+                fd = libc.dup(-1)  # invalid fd, replaced by the injected one
+                if fd < 0:
+                    os._exit(6)
+                data = os.read(fd, 16)  # /dev/null reads as EOF
+                os.write(cw, str(fd).encode() + b":" + data)
+                os._exit(0)
 
-        os.close(cw)
-        notif = _recv(listener)
-        check("notif nr", notif.nr == syscall_nr("dup"), str(notif.nr))
-        check("notif fd arg", notif.args[0] == 0xFFFFFFFFFFFFFFFF, hex(notif.args[0]))
-        try:
-            remote = listener.addfd(
-                notif.id,
-                devnull,
-                flags=notify.AddFdFlag.SEND,
-                newfd_flags=os.O_CLOEXEC,
+            os.close(cw)
+            notif = _recv(listener)
+            check("notif nr", notif.nr == syscall_nr("dup"), str(notif.nr))
+            check(
+                "notif fd arg",
+                notif.args[0] == 0xFFFFFFFFFFFFFFFF,
+                hex(notif.args[0]),
             )
-        except OSError as exc:
-            if exc.errno == errno.EINVAL:
-                os.waitpid(pid, 0)
-                skip("kernel lacks SECCOMP_ADDFD_FLAG_SEND")
-            raise
-        check("addfd remote fd", remote >= 0, str(remote))
-        reported = os.read(cr, 64)
-        os.close(cr)
-        check(
-            "child got injected fd",
-            reported == f"{remote}:".encode(),
-            repr(reported),
-        )
-        _, status = os.waitpid(pid, 0)
-        check(
-            "child exit",
-            os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
-            str(status),
-        )
+            try:
+                remote = listener.addfd(
+                    notif.id,
+                    devnull,
+                    flags=notify.AddFdFlag.SEND,
+                    newfd_flags=os.O_CLOEXEC,
+                )
+            except OSError as exc:
+                if exc.errno == errno.EINVAL:
+                    os.waitpid(pid, 0)
+                    skip("kernel lacks SECCOMP_ADDFD_FLAG_SEND")
+                raise
+            check("addfd remote fd", remote >= 0, str(remote))
+            reported = os.read(cr, 64)
+            os.close(cr)
+            check(
+                "child got injected fd",
+                reported == f"{remote}:".encode(),
+                repr(reported),
+            )
+            _, status = os.waitpid(pid, 0)
+            check(
+                "child exit",
+                os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+                str(status),
+            )
     finally:
         os.close(devnull)
-        listener.close()
 
 
 def scenario_pidfd() -> None:
@@ -378,6 +372,7 @@ def scenario_pidfd() -> None:
         os.write(w, str(fd).encode())
         os.close(w)
         os.read(gate_r, 1)  # wait until the parent grabbed the fd
+        os.close(fd)
         os._exit(0)
 
     os.close(w)
