@@ -9,13 +9,23 @@ FAIL lines for mismatches and exits nonzero on failure.
 import ctypes
 import errno
 import os
+import select
 import signal
 import sys
 from pathlib import Path
 
-from seccompy import Action, Filter
+from seccompy import Action, Filter, FilterFlag, notify, syscall_nr
+from seccompy.syscalls import audit_arch
 
 failures: list[str] = []
+
+
+class _SkipError(Exception):
+    """Raised to mark a scenario as skipped (exit code 77)."""
+
+
+def skip(reason: str) -> None:
+    raise _SkipError(reason)
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -146,6 +156,259 @@ def scenario_nnp() -> None:
     )
 
 
+class _Utsname(ctypes.Structure):
+    _fields_ = [
+        ("sysname", ctypes.c_char * 65),
+        ("nodename", ctypes.c_char * 65),
+        ("release", ctypes.c_char * 65),
+        ("version", ctypes.c_char * 65),
+        ("machine", ctypes.c_char * 65),
+        ("domainname", ctypes.c_char * 65),
+    ]
+
+
+def _listen(notified: str) -> notify.Listener:
+    """Install a NEW_LISTENER filter notifying on one syscall.
+
+    The filter is loaded in this process before fork: the child
+    inherits both the filter and the notification fd, which the
+    parent half of the scenario supervises. The notified syscall must
+    be one the supervisor side never calls, or it would block on its
+    own listener. In particular openat cannot be used: CPython calls
+    it while os.fork() finishes in the parent, which deadlocks the
+    supervisor on its own notification.
+    """
+    filt = Filter(default=Action.ALLOW, flags=FilterFlag.NEW_LISTENER)
+    filt.notify(notified)
+    listener = filt.load()
+    assert listener is not None
+    return listener
+
+
+def _recv(listener: notify.Listener) -> notify.Notification:
+    poller = select.poll()
+    poller.register(listener, select.POLLIN)
+    if not poller.poll(15000):
+        raise RuntimeError("timed out waiting for a notification")
+    return listener.recv()
+
+
+def scenario_notify_errno() -> None:
+    """A notified mount gets a spoofed EPERM from the supervisor."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    listener = _listen("mount")
+    try:
+        pid = os.fork()
+        if pid == 0:
+            ctypes.set_errno(0)
+            rc = libc.mount(None, None, None, 0, None)
+            err = ctypes.get_errno()
+            os._exit(0 if rc == -1 and err == errno.EPERM else 3)
+
+        notif = _recv(listener)
+        check("notif nr", notif.nr == syscall_nr("mount"), str(notif.nr))
+        check("notif pid", notif.pid == pid, f"{notif.pid} != {pid}")
+        check("notif flags", notif.flags == 0, str(notif.flags))
+        check("notif arch", notif.arch == audit_arch(), hex(notif.arch))
+        check("id valid", listener.valid(notif.id))
+        listener.respond(notif.id, error=errno.EPERM)
+        check("id invalid after reply", not listener.valid(notif.id))
+        _, status = os.waitpid(pid, 0)
+        check(
+            "child observed EPERM",
+            os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+            str(status),
+        )
+    finally:
+        listener.close()
+
+
+def scenario_notify_continue() -> None:
+    """CONTINUE lets the target's uname run for real."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    cr, cw = os.pipe()
+    listener = _listen("uname")
+    try:
+        pid = os.fork()
+        if pid == 0:
+            os.close(cr)
+            buf = _Utsname()
+            ctypes.set_errno(0)
+            if libc.uname(ctypes.byref(buf)) != 0:
+                os._exit(4)
+            os.write(cw, buf.sysname)
+            os._exit(0)
+
+        os.close(cw)
+        notif = _recv(listener)
+        check("notif nr", notif.nr == syscall_nr("uname"), str(notif.nr))
+        check("notif pid", notif.pid == pid, f"{notif.pid} != {pid}")
+        check("notif buf arg", notif.args[0] != 0, hex(notif.args[0]))
+        listener.respond(notif.id, flags=notify.RespFlag.CONTINUE)
+        reported = os.read(cr, 64)
+        os.close(cr)
+        check("continued syscall ran", reported == b"Linux", repr(reported))
+        _, status = os.waitpid(pid, 0)
+        check(
+            "child exit",
+            os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+            str(status),
+        )
+    finally:
+        listener.close()
+
+
+def scenario_notify_dead() -> None:
+    """Responding after the target died fails with ENOENT."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    listener = _listen("mount")
+    try:
+        pid = os.fork()
+        if pid == 0:
+            libc.mount(None, None, None, 0, None)  # blocks until killed
+            os._exit(0)
+
+        notif = _recv(listener)
+        check("id valid", listener.valid(notif.id))
+        os.kill(pid, signal.SIGKILL)
+        _, status = os.waitpid(pid, 0)
+        check(
+            "child killed",
+            os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL,
+            str(status),
+        )
+        try:
+            listener.respond(notif.id, error=errno.EIO)
+            check("respond to dead", False, "no error raised")
+        except OSError as exc:
+            check("respond to dead", exc.errno == errno.ENOENT, str(exc))
+        check("valid on dead", not listener.valid(notif.id))
+    finally:
+        listener.close()
+
+
+def scenario_notify_close() -> None:
+    """Closing the listener completes blocked syscalls with ENOSYS."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    listener = _listen("mount")
+    pid = os.fork()
+    if pid == 0:
+        # ENOSYS only fires once the last reference to the notification
+        # fd is gone; the child inherited one across fork.
+        listener.close()
+        ctypes.set_errno(0)
+        rc = libc.mount(None, None, None, 0, None)
+        err = ctypes.get_errno()
+        os._exit(0 if rc == -1 and err == errno.ENOSYS else 5)
+
+    notif = _recv(listener)
+    check("id valid", listener.valid(notif.id))
+    listener.close()
+    check("closed", listener.closed)
+    _, status = os.waitpid(pid, 0)
+    check(
+        "child saw ENOSYS",
+        os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+        str(status),
+    )
+
+
+def scenario_notify_addfd() -> None:
+    """ADDFD SEND injects a supervisor fd into the target atomically."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    devnull = os.open("/dev/null", os.O_RDONLY)
+    cr, cw = os.pipe()
+    listener = _listen("dup")
+    try:
+        pid = os.fork()
+        if pid == 0:
+            os.close(cr)
+            ctypes.set_errno(0)
+            fd = libc.dup(-1)  # invalid fd, replaced by the injected one
+            if fd < 0:
+                os._exit(6)
+            data = os.read(fd, 16)  # /dev/null reads as EOF
+            os.write(cw, str(fd).encode() + b":" + data)
+            os._exit(0)
+
+        os.close(cw)
+        notif = _recv(listener)
+        check("notif nr", notif.nr == syscall_nr("dup"), str(notif.nr))
+        check("notif fd arg", notif.args[0] == 0xFFFFFFFFFFFFFFFF, hex(notif.args[0]))
+        try:
+            remote = listener.addfd(
+                notif.id,
+                devnull,
+                flags=notify.AddFdFlag.SEND,
+                newfd_flags=os.O_CLOEXEC,
+            )
+        except OSError as exc:
+            if exc.errno == errno.EINVAL:
+                os.waitpid(pid, 0)
+                skip("kernel lacks SECCOMP_ADDFD_FLAG_SEND")
+            raise
+        check("addfd remote fd", remote >= 0, str(remote))
+        reported = os.read(cr, 64)
+        os.close(cr)
+        check(
+            "child got injected fd",
+            reported == f"{remote}:".encode(),
+            repr(reported),
+        )
+        _, status = os.waitpid(pid, 0)
+        check(
+            "child exit",
+            os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+            str(status),
+        )
+    finally:
+        os.close(devnull)
+        listener.close()
+
+
+def scenario_pidfd() -> None:
+    """pidfd_open + pidfd_getfd duplicate an fd out of a child."""
+    r, w = os.pipe()
+    gate_r, gate_w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(r)
+        os.close(gate_w)
+        fd = os.open("/dev/null", os.O_RDONLY)
+        os.write(w, str(fd).encode())
+        os.close(w)
+        os.read(gate_r, 1)  # wait until the parent grabbed the fd
+        os._exit(0)
+
+    os.close(w)
+    os.close(gate_r)
+    fd_no = int(os.read(r, 64))
+    os.close(r)
+    try:
+        pidfd = notify.pidfd_open(pid)
+        dup = notify.pidfd_getfd(pidfd, fd_no)
+        os.close(pidfd)
+    except OSError as exc:
+        os.write(gate_w, b"x")
+        os.close(gate_w)
+        os.waitpid(pid, 0)
+        if exc.errno in (errno.EPERM, errno.EACCES, errno.ENOSYS):
+            skip(f"pidfd_getfd unavailable: {exc}")
+        raise
+    check("dup reads devnull", os.read(dup, 1) == b"")
+    check(
+        "dup is devnull",
+        os.fstat(dup).st_rdev == Path("/dev/null").stat().st_rdev,
+    )
+    os.close(dup)
+    os.write(gate_w, b"x")
+    os.close(gate_w)
+    _, status = os.waitpid(pid, 0)
+    check(
+        "child exit", os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, str(status)
+    )
+
+
 def main() -> int:
     scenarios = {
         "errno": lambda: scenario_errno(sys.argv[2]),
@@ -156,12 +419,21 @@ def main() -> int:
         "args": scenario_args,
         "default_errno": scenario_default_errno,
         "nnp": scenario_nnp,
+        "notify_errno": scenario_notify_errno,
+        "notify_continue": scenario_notify_continue,
+        "notify_dead": scenario_notify_dead,
+        "notify_close": scenario_notify_close,
+        "notify_addfd": scenario_notify_addfd,
+        "pidfd": scenario_pidfd,
     }
     try:
         scenarios[sys.argv[1]]()
     except KeyError:
         sys.stderr.write(f"unknown scenario {sys.argv[1]}\n")
         return 2
+    except _SkipError as exc:
+        sys.stderr.write(f"SKIP {exc}\n")
+        return 77
 
     for failure in failures:
         sys.stderr.write(f"FAIL {failure}\n")

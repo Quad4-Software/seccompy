@@ -27,6 +27,9 @@ def run_packed(prog: bytes, data: bytes) -> int:
         if code == bpf.BPF_LD_ABS_W:
             acc = int.from_bytes(data[k : k + 4].ljust(4, b"\0"), "little")
             pc += 1
+        elif code == bpf.BPF_ALU_AND_K:
+            acc &= k
+            pc += 1
         elif code == bpf.BPF_JA:
             pc += 1 + k
         elif code == bpf.BPF_JEQ:
@@ -51,6 +54,9 @@ def run_source(insns: list[bpf.Insn], labels: dict[str, int], data: bytes) -> in
         insn = insns[pc]
         if isinstance(insn, bpf.Load):
             acc = int.from_bytes(data[insn.k : insn.k + 4].ljust(4, b"\0"), "little")
+            pc += 1
+        elif isinstance(insn, bpf.And):
+            acc &= insn.k
             pc += 1
         elif isinstance(insn, bpf.Jump):
             cond = {
@@ -169,8 +175,10 @@ def programs(draw: st.DrawFn) -> tuple[list[bpf.Insn], dict[str, int]]:
     insns: list[bpf.Insn] = []
     for i in range(n - 1):
         later = [name for name in forward if labels[name] > i]
-        kind = draw(st.sampled_from(["load", "jump", "ja", "ret"]))
-        if kind == "load" or not later:
+        kind = draw(st.sampled_from(["load", "jump", "ja", "ret", "and"]))
+        if kind == "and":
+            insns.append(bpf.And(draw(st.integers(0, 0xFFFFFFFF))))
+        elif kind == "load" or not later:
             insns.append(bpf.Load(draw(st.integers(0, 60))))
         elif kind == "ja":
             insns.append(bpf.Ja(draw(st.sampled_from(later))))

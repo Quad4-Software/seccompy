@@ -2,13 +2,15 @@
 """Tests for Filter construction, compilation and the load path."""
 
 import copy
+import ctypes
 import errno
+import os
 import struct
 from types import SimpleNamespace
 
 import pytest
 
-from seccompy import Action, Filter, FilterFlag, SeccompError, _syscall
+from seccompy import Action, Filter, FilterFlag, SeccompError, _syscall, notify
 from seccompy.bpf import BPF_JEQ, BPF_LD_ABS_W, BPF_RET_K
 
 
@@ -94,10 +96,22 @@ def test_load_passes_flags(fake_kernel: SimpleNamespace) -> None:
     assert fake_kernel.installed[0][1] == int(FilterFlag.TSYNC | FilterFlag.LOG)
 
 
-def test_load_rejects_new_listener() -> None:
+def test_load_new_listener_returns_listener(
+    fake_kernel: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fd = os.open("/dev/null", os.O_RDONLY)
+    monkeypatch.setattr(_syscall, "set_mode_filter", lambda program, flags: fd)
+    sizes = _syscall.SeccompNotifSizes(
+        seccomp_notif=ctypes.sizeof(_syscall.SeccompNotif),
+        seccomp_notif_resp=ctypes.sizeof(_syscall.SeccompNotifResp),
+        seccomp_data=ctypes.sizeof(_syscall.SeccompData),
+    )
+    monkeypatch.setattr(_syscall, "notif_sizes", lambda: sizes)
     filt = Filter(flags=FilterFlag.NEW_LISTENER)
-    with pytest.raises(ValueError, match="NEW_LISTENER"):
-        filt.load()
+    listener = filt.load()
+    assert isinstance(listener, notify.Listener)
+    assert listener.fileno() == fd
+    listener.close()
 
 
 def test_load_twice_raises(fake_kernel: SimpleNamespace) -> None:
