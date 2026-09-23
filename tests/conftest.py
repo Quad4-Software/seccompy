@@ -16,8 +16,11 @@ ACTIONS_AVAIL = Path("/proc/sys/kernel/seccomp/actions_avail")
 
 Sandbox = Callable[..., "subprocess.CompletedProcess[str]"]
 
+_STRICT = os.environ.get("Q4_REQUIRE_LIVE") == "1"
+
 requires_seccomp = pytest.mark.skipif(
-    not seccompy.supported(), reason="kernel does not support seccomp filters"
+    not seccompy.supported() and not _STRICT,
+    reason="kernel does not support seccomp filters",
 )
 
 

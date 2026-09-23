@@ -19,10 +19,11 @@ from seccompy import (
     notify,
 )
 
-from .conftest import Sandbox, kernel_has_action, requires_seccomp
+from .conftest import _STRICT, Sandbox, kernel_has_action, requires_seccomp
 
 requires_user_notif = pytest.mark.skipif(
-    not kernel_has_action("user_notif") or not flag_supported(FilterFlag.NEW_LISTENER),
+    (not kernel_has_action("user_notif") or not flag_supported(FilterFlag.NEW_LISTENER))
+    and not _STRICT,
     reason="kernel lacks SECCOMP_RET_USER_NOTIF support",
 )
 
