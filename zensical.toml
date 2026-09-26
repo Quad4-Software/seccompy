@@ -1,0 +1,21 @@
+[project]
+site_name = "seccompy"
+site_url = "https://quad4-software.github.io/seccompy/"
+site_description = "Python bindings for Linux seccomp-BPF syscall filtering"
+site_author = "Quad4"
+repo_url = "https://github.com/Quad4-Software/seccompy"
+repo_name = "Quad4-Software/seccompy"
+docs_dir = "docs"
+site_dir = "site"
+nav = [
+  { "Home" = "index.md" },
+  { "Filters" = "filters.md" },
+  { "User notifications" = "notifications.md" },
+  { "API reference" = "api.md" },
+]
+
+[project.theme]
+features = [
+  "content.action.edit",
+  "content.action.view",
+]

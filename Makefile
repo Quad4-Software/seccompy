@@ -1,4 +1,4 @@
-.PHONY: check lint test build
+.PHONY: check lint test build docs
 
 check: lint test
 
@@ -14,3 +14,6 @@ test:
 
 build:
 	uv build
+
+docs:
+	uv run --group docs --no-default-groups zensical build --clean
