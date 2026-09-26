@@ -5,7 +5,7 @@ compiles to a classic BPF program the kernel runs against
 `struct seccomp_data` on every syscall entry.
 
 ```python
-filt = Filter(default=Action.ALLOW)           # or a raw SECCOMP_RET_* int
+filt = Filter(default=Action.ALLOW)  # or a raw SECCOMP_RET_* int
 filt.errno("openat", errno.EACCES)
 filt.kill("ptrace")
 filt.load()

@@ -57,7 +57,7 @@ filt.errno(
 ```python
 import seccompy
 
-seccompy.supported()                          # kernel can install filters
+seccompy.supported()  # kernel can install filters
 seccompy.action_supported(seccompy.Action.LOG)
 seccompy.flag_supported(seccompy.FilterFlag.NEW_LISTENER)
 ```
