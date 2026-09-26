@@ -116,12 +116,12 @@ class ArgCmp:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "op", CmpOp(self.op))
-        if not 0 <= self.index <= 5:
-            raise ValueError(f"argument index out of range: {self.index}")
-        if not 0 <= self.value <= _U64:
-            raise ValueError(f"argument value out of range: {self.value:#x}")
-        if not 0 <= self.mask <= _U64:
-            raise ValueError(f"argument mask out of range: {self.mask:#x}")
+        if not isinstance(self.index, int) or not 0 <= self.index <= 5:
+            raise ValueError(f"argument index out of range: {self.index!r}")
+        if not isinstance(self.value, int) or not 0 <= self.value <= _U64:
+            raise ValueError(f"argument value out of range: {self.value!r}")
+        if not isinstance(self.mask, int) or not 0 <= self.mask <= _U64:
+            raise ValueError(f"argument mask out of range: {self.mask!r}")
         if self.op is CmpOp.MASKED_EQ:
             if self.value & ~self.mask:
                 raise ValueError("masked-eq value has bits outside the mask")
@@ -177,10 +177,11 @@ class Filter:
         *,
         flags: FilterFlag = FilterFlag.NONE,
     ) -> None:
-        default = int(default)
-        if not 0 <= default <= 0xFFFFFFFF:
-            raise ValueError(f"default action out of range: {default:#x}")
-        self._default = default
+        if not isinstance(default, int) or not 0 <= default <= 0xFFFFFFFF:
+            raise ValueError(f"default action out of range: {default!r}")
+        self._default = int(default)
+        if not isinstance(flags, int) or not 0 <= flags <= 0xFFFFFFFF:
+            raise ValueError(f"filter flags out of range: {flags!r}")
         self._flags = FilterFlag(flags)
         self._rules: dict[int, list[_Rule]] = {}
         self._program: bytes | None = None
@@ -231,16 +232,16 @@ class Filter:
         self, syscall: str | int, error: int, *, args: Args | None = None
     ) -> None:
         """Make the syscall fail with the given errno value."""
-        if not 0 <= error <= SECCOMP_RET_DATA:
-            raise ValueError(f"errno out of range: {error}")
+        if not isinstance(error, int) or not 0 <= error <= SECCOMP_RET_DATA:
+            raise ValueError(f"errno out of range: {error!r}")
         self._add(syscall, int(Action.ERRNO) | error, args)
 
     def trace(
         self, syscall: str | int, msg: int = 0, *, args: Args | None = None
     ) -> None:
         """Hand the syscall to a ptrace tracer, tagging it with msg."""
-        if not 0 <= msg <= SECCOMP_RET_DATA:
-            raise ValueError(f"trace message out of range: {msg}")
+        if not isinstance(msg, int) or not 0 <= msg <= SECCOMP_RET_DATA:
+            raise ValueError(f"trace message out of range: {msg!r}")
         self._add(syscall, int(Action.TRACE) | msg, args)
 
     def log(self, syscall: str | int, *, args: Args | None = None) -> None:

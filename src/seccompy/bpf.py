@@ -65,6 +65,13 @@ _JUMP_OPS: Final = frozenset({BPF_JEQ, BPF_JGT, BPF_JGEQ, BPF_JSET})
 
 _MAX_COND_JUMP: Final = 255
 
+_U32_MAX: Final = 0xFFFFFFFF
+
+
+def _check_u32(name: str, value: int) -> None:
+    if not isinstance(value, int) or not 0 <= value <= _U32_MAX:
+        raise ValueError(f"{name} does not fit in a u32: {value!r}")
+
 
 class Insn:
     """Base class for BPF instructions."""
@@ -78,12 +85,18 @@ class Load(Insn):
 
     k: int
 
+    def __post_init__(self) -> None:
+        _check_u32("offset", self.k)
+
 
 @dataclass(frozen=True)
 class And(Insn):
     """Mask the accumulator with k (A &= k)."""
 
     k: int
+
+    def __post_init__(self) -> None:
+        _check_u32("operand", self.k)
 
 
 @dataclass(frozen=True)
@@ -101,6 +114,7 @@ class Jump(Insn):
     def __post_init__(self) -> None:
         if self.op not in _JUMP_OPS:
             raise ValueError(f"not a conditional jump opcode: {self.op:#x}")
+        _check_u32("operand", self.k)
 
 
 @dataclass(frozen=True)
@@ -115,6 +129,9 @@ class Ret(Insn):
     """Terminate the program with result k."""
 
     k: int
+
+    def __post_init__(self) -> None:
+        _check_u32("result", self.k)
 
 
 def _positions(sizes: list[int]) -> list[int]:
@@ -153,7 +170,8 @@ def _validate_labels(insns: list[Insn], labels: dict[str, int]) -> None:
         for target in _targets(insn):
             if target not in labels:
                 raise ValueError(f"undefined label: {target}")
-            if labels[target] > len(insns):
+            idx = labels[target]
+            if not isinstance(idx, int) or not 0 <= idx <= len(insns):
                 raise ValueError(f"label out of range: {target}")
 
 

@@ -19,6 +19,19 @@
   sizes() reporting the kernel's struct sizes, which Listener validates
   on construction. pidfd_open()/pidfd_getfd() wrappers cover the
   supervisor-in-another-process case.
+- aarch64 syscall table: added name_to_handle_at (264),
+  open_by_handle_at (265), statmount (457) and listmount (458), which
+  asm-generic wires up but the table was missing.
+- Tighter argument validation: ArgCmp rejects non-integer index, value
+  and mask; the bpf instruction classes reject operands that do not fit
+  a u32; assemble() rejects negative or non-integer label positions;
+  Filter rejects flags wider than 32 bits; Listener.addfd() bounds
+  local_fd/newfd and limits newfd_flags to O_CLOEXEC; Listener.respond()
+  enforces the kernel's rule that CONTINUE carries error and val of 0.
+- testing.probe() no longer misreports failure as success when a child
+  raises an OSError whose errno does not fit the 8-bit exit status.
+- Raw seccomp(2), prctl(2) and ioctl(2) calls now retry on EINTR,
+  matching the standard library's PEP 475 behavior.
 
 ## [0.1.0] - 2026-09-22
 

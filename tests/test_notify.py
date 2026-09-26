@@ -163,6 +163,10 @@ def test_respond_validates_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
             listener.respond(1, error=5000)
         with pytest.raises(ValueError, match="range"):
             listener.respond(1, val=1 << 63)
+        with pytest.raises(ValueError, match="flags"):
+            listener.respond(1, flags=notify.RespFlag(1 << 33))
+        with pytest.raises(ValueError, match="CONTINUE"):
+            listener.respond(1, error=errno.EPERM, flags=notify.RespFlag.CONTINUE)
 
 
 def test_addfd_validates_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,6 +178,12 @@ def test_addfd_validates_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
             listener.addfd(1, -1)
         with pytest.raises(ValueError, match="newfd"):
             listener.addfd(1, 0, newfd=4)
+        with pytest.raises(ValueError, match="fd out of range"):
+            listener.addfd(1, 1 << 33)
+        with pytest.raises(ValueError, match="O_CLOEXEC"):
+            listener.addfd(1, 0, newfd_flags=1 << 20)
+        with pytest.raises(ValueError, match="O_CLOEXEC"):
+            listener.addfd(1, 0, newfd_flags=os.O_APPEND)
 
 
 def test_closed_listener_rejects_calls(monkeypatch: pytest.MonkeyPatch) -> None:

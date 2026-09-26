@@ -2,6 +2,7 @@
 """Tests for the classic BPF instruction model and assembler."""
 
 import struct
+from typing import cast
 
 import pytest
 from hypothesis import given, settings
@@ -120,9 +121,32 @@ def test_undefined_label_rejected() -> None:
         bpf.assemble(insns, {})
 
 
+def test_negative_label_rejected() -> None:
+    # A negative index would wrap around inside the assembler and
+    # silently misassemble instead of landing on the first instruction.
+    insns: list[bpf.Insn] = [bpf.Load(0), bpf.Jump(bpf.BPF_JEQ, 1, None, "x")]
+    insns.append(bpf.Ret(ALLOW))
+    with pytest.raises(ValueError, match="out of range"):
+        bpf.assemble(insns, {"x": -1})
+
+
 def test_bad_jump_opcode_rejected() -> None:
     with pytest.raises(ValueError, match="opcode"):
         bpf.Jump(bpf.BPF_JA, 0)
+
+
+def test_operands_must_fit_u32() -> None:
+    with pytest.raises(ValueError, match="u32"):
+        bpf.Load(-4)
+    with pytest.raises(ValueError, match="u32"):
+        bpf.And(1 << 32)
+    with pytest.raises(ValueError, match="u32"):
+        bpf.Jump(bpf.BPF_JEQ, 1 << 32)
+    with pytest.raises(ValueError, match="u32"):
+        bpf.Ret(1 << 32)
+    with pytest.raises(ValueError, match="u32"):
+        # The cast keeps the intentional loose call legible to type checkers.
+        bpf.Load(cast("int", 1.5))
 
 
 def test_far_jump_expands_to_trampoline() -> None:

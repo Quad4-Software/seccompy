@@ -27,6 +27,10 @@ def test_aarch64_table() -> None:
     assert AARCH64_SYSCALLS["getpid"] == 172
     assert AARCH64_SYSCALLS["openat"] == 56
     assert AARCH64_SYSCALLS["seccomp"] == 277
+    assert AARCH64_SYSCALLS["name_to_handle_at"] == 264
+    assert AARCH64_SYSCALLS["open_by_handle_at"] == 265
+    assert AARCH64_SYSCALLS["statmount"] == 457
+    assert AARCH64_SYSCALLS["listmount"] == 458
 
 
 def test_audit_arch_constants() -> None:

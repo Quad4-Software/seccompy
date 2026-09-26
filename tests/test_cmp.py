@@ -70,6 +70,10 @@ def test_argcmp_validation() -> None:
         ArgCmp(0, CmpOp.MASKED_EQ, 8, mask=3)
     with pytest.raises(ValueError, match="only meaningful"):
         ArgCmp(0, CmpOp.GT, 0, mask=0xFF)
+    with pytest.raises(ValueError, match="index"):
+        ArgCmp(cast("int", 0.5), CmpOp.EQ, 0)
+    with pytest.raises(ValueError, match="value"):
+        ArgCmp(0, CmpOp.EQ, cast("int", 1.5))
 
 
 def test_gt_golden_program() -> None:

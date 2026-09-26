@@ -84,6 +84,19 @@ def test_probe_reports_kill() -> None:
     assert result.signal == signal.SIGSYS
 
 
+def test_probe_clamps_large_errno() -> None:
+    # An errno above 255 cannot survive the 8-bit exit status, but the
+    # probe must still report failure rather than alias to success.
+    filt = seccompy.Filter(default=seccompy.Action.ALLOW)
+
+    def boom() -> None:
+        raise OSError(512, "internal restart")
+
+    result = seccompy.testing.probe(filt, boom)
+    assert not result.ok
+    assert result.errno == 255
+
+
 def test_probe_rejects_loaded_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(seccompy._syscall, "set_no_new_privs", lambda: None)
     monkeypatch.setattr(seccompy._syscall, "set_mode_filter", lambda program, flags: 0)

@@ -92,8 +92,8 @@ _IoctlArg = (
 
 
 def _check_id(notif_id: int) -> None:
-    if not 0 <= notif_id <= _U64:
-        raise ValueError(f"notification id out of range: {notif_id}")
+    if not isinstance(notif_id, int) or not 0 <= notif_id <= _U64:
+        raise ValueError(f"notification id out of range: {notif_id!r}")
 
 
 class RespFlag(IntFlag):
@@ -275,10 +275,14 @@ class Listener:
         window but cannot close it.
         """
         _check_id(notif_id)
-        if not 0 <= error <= _MAX_ERRNO:
-            raise ValueError(f"errno out of range: {error}")
-        if not -(1 << 63) <= val <= (1 << 63) - 1:
-            raise ValueError(f"return value out of range: {val}")
+        if not isinstance(error, int) or not 0 <= error <= _MAX_ERRNO:
+            raise ValueError(f"errno out of range: {error!r}")
+        if not isinstance(val, int) or not -(1 << 63) <= val <= (1 << 63) - 1:
+            raise ValueError(f"return value out of range: {val!r}")
+        if not isinstance(flags, int) or not 0 <= flags <= 0xFFFFFFFF:
+            raise ValueError(f"response flags out of range: {flags!r}")
+        if flags & RespFlag.CONTINUE and (error or val):
+            raise ValueError("RespFlag.CONTINUE requires error and val to be 0")
         resp = _syscall.SeccompNotifResp(
             id=notif_id, val=val, error=-error, flags=int(flags)
         )
@@ -304,10 +308,16 @@ class Listener:
         EINVAL.
         """
         _check_id(notif_id)
-        if local_fd < 0:
-            raise ValueError(f"fd out of range: {local_fd}")
+        if not isinstance(local_fd, int) or not 0 <= local_fd <= 0x7FFFFFFF:
+            raise ValueError(f"fd out of range: {local_fd!r}")
+        if not isinstance(newfd, int) or not 0 <= newfd <= 0x7FFFFFFF:
+            raise ValueError(f"fd out of range: {newfd!r}")
         if newfd != 0 and not flags & AddFdFlag.SETFD:
             raise ValueError("newfd requires AddFdFlag.SETFD")
+        if not isinstance(flags, int) or not 0 <= flags <= 0xFFFFFFFF:
+            raise ValueError(f"addfd flags out of range: {flags!r}")
+        if not isinstance(newfd_flags, int) or newfd_flags & ~os.O_CLOEXEC:
+            raise ValueError("newfd_flags accepts only O_CLOEXEC")
         req = _syscall.SeccompNotifAddfd(
             id=notif_id,
             flags=int(flags),
@@ -336,6 +346,8 @@ class Listener:
 
     def set_flags(self, flags: FdFlag) -> None:
         """Set flags on the notification fd (SECCOMP_IOCTL_NOTIF_SET_FLAGS)."""
+        if not isinstance(flags, int) or not 0 <= flags <= _U64:
+            raise ValueError(f"fd flags out of range: {flags!r}")
         bits = ctypes.c_uint64(int(flags))
         self._ioctl(_IOCTL_NOTIF_SET_FLAGS, bits)
 

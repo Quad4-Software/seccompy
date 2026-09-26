@@ -140,10 +140,16 @@ def _pidfd_nr() -> tuple[int, int]:
 
 
 def _call(*args: object) -> int:
-    ret = int(_get_libc().syscall(*args))
-    if ret != -1:
-        return ret
-    err = ctypes.get_errno()
+    while True:
+        ret = int(_get_libc().syscall(*args))
+        if ret != -1:
+            return ret
+        err = ctypes.get_errno()
+        if err != errno.EINTR:
+            break
+        # Retry like the standard library does (PEP 475); pending signal
+        # handlers still run between bytecodes, so KeyboardInterrupt
+        # and friends are not swallowed.
     if err in (errno.ENOSYS, errno.EOPNOTSUPP):
         raise UnsupportedError(err, os.strerror(err))
     raise SeccompError(err, os.strerror(err))
@@ -182,10 +188,13 @@ def probe_flag(flag: int) -> bool:
 
 def set_no_new_privs() -> None:
     """Set the no_new_privs attribute on the calling thread via prctl."""
-    ret = _get_libc().prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
-    if ret == -1:
+    while True:
+        ret = _get_libc().prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+        if ret != -1:
+            return
         err = ctypes.get_errno()
-        raise SeccompError(err, os.strerror(err))
+        if err != errno.EINTR:
+            raise SeccompError(err, os.strerror(err))
 
 
 def set_mode_filter(program: bytes, flags: int = 0) -> int:
@@ -214,19 +223,24 @@ def notif_sizes() -> SeccompNotifSizes:
 
 def ioctl(fd: int, request: int, arg: object) -> int:
     """Call ioctl(2) on fd, preserving the kernel errno on failure."""
-    ret = int(_get_libc().ioctl(fd, request, arg))
-    if ret == -1:
+    while True:
+        ret = int(_get_libc().ioctl(fd, request, arg))
+        if ret != -1:
+            return ret
         err = ctypes.get_errno()
-        if err in (errno.ENOSYS, errno.EOPNOTSUPP):
-            raise UnsupportedError(err, os.strerror(err))
-        raise SeccompError(err, os.strerror(err))
-    return ret
+        if err != errno.EINTR:
+            break
+        # Retry like the standard library does (PEP 475); pending signal
+        # handlers still run between bytecodes.
+    if err in (errno.ENOSYS, errno.EOPNOTSUPP):
+        raise UnsupportedError(err, os.strerror(err))
+    raise SeccompError(err, os.strerror(err))
 
 
 def pidfd_open(pid: int, flags: int = 0) -> int:
     """Open a pidfd for a process via pidfd_open(2)."""
-    if not 0 <= pid <= 0x7FFFFFFF:
-        raise ValueError(f"pid out of range: {pid}")
+    if not isinstance(pid, int) or not 0 <= pid <= 0x7FFFFFFF:
+        raise ValueError(f"pid out of range: {pid!r}")
     return _call(_pidfd_nr()[0], pid, flags)
 
 

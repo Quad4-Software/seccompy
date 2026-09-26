@@ -49,7 +49,10 @@ def probe(filt: Filter, fn: Callable[[], object]) -> ProbeResult:
             filt.load()
             fn()
         except OSError as exc:
-            os._exit(exc.errno if exc.errno is not None else 1)
+            # Exit statuses carry only 8 bits, so an errno of 0 or a
+            # multiple of 256 would alias to success. Clamp to 255.
+            code = exc.errno if exc.errno is not None else 1
+            os._exit(code if 0 < code <= 255 else 255)
         except BaseException:  # noqa: BLE001 - the child must not propagate
             os._exit(255)
         os._exit(0)
