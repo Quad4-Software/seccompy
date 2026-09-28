@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-09-28
 
 - Argument conditions beyond equality: CmpOp operators EQ, NE, LT, LE,
   GT, GE and MASKED_EQ on the full 64-bit syscall arguments, via the
